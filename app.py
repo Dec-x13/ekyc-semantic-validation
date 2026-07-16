@@ -6,7 +6,7 @@ import random
 import textwrap
 import streamlit as st
 from PIL import Image
-from ocr_pipeline import run_ocr_pipeline
+from ocr_pipeline import run_ocr_pipeline, extract_mrz
 from rule_engine import validate_dates
 from generator import draw_id_card, generate_valid_dates, generate_frankenstein_dates, fake
 
@@ -18,7 +18,62 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Figma Pixel-Perfect CSS Overrides (Deep Navy Theme)
+# Reference date for chronological and validity validation rules
+REF_DATE = datetime.date(2026, 7, 16)
+
+# Directories
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IDS_DIR = os.path.join(BASE_DIR, "data", "ids")
+REAL_IDS_DIR = os.path.join(BASE_DIR, "data", "real_ids")
+os.makedirs(REAL_IDS_DIR, exist_ok=True)
+METADATA_PATH = os.path.join(BASE_DIR, "data", "metadata.json")
+
+# Retrieve metadata index
+@st.cache_data
+def load_metadata():
+    if os.path.exists(METADATA_PATH):
+        try:
+            with open(METADATA_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+metadata = load_metadata()
+
+# Centralized State Initialization (placed at the top of the file)
+if 'active_doc_path' not in st.session_state:
+    st.session_state.active_doc_path = os.path.join(IDS_DIR, "id_0001.png")
+if 'uploaded_file_obj' not in st.session_state:
+    st.session_state.uploaded_file_obj = None
+if 'doc_source' not in st.session_state:
+    st.session_state.doc_source = 'test'
+if 'selected_test_file' not in st.session_state:
+    st.session_state.selected_test_file = "id_0001.png"
+if 'selected_real_file' not in st.session_state:
+    st.session_state.selected_real_file = None
+if 'validated' not in st.session_state:
+    st.session_state.validated = False
+if 'is_valid' not in st.session_state:
+    st.session_state.is_valid = True
+if 'violations' not in st.session_state:
+    st.session_state.violations = []
+if 'dob' not in st.session_state:
+    st.session_state.dob = None
+if 'issue' not in st.session_state:
+    st.session_state.issue = None
+if 'expiry' not in st.session_state:
+    st.session_state.expiry = None
+if 'raw_text' not in st.session_state:
+    st.session_state.raw_text = ""
+if 'is_sim' not in st.session_state:
+    st.session_state.is_sim = False
+if 'mrz' not in st.session_state:
+    st.session_state.mrz = None
+if 'extraction_error' not in st.session_state:
+    st.session_state.extraction_error = None
+
+# Custom CSS Injections for dark slate/sky-blue style
 st.markdown("""
 <style>
     /* Hide Streamlit default branding */
@@ -148,54 +203,117 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Reference date for the check
-REF_DATE = datetime.date(2026, 7, 16)
-
-# Directories
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IDS_DIR = os.path.join(BASE_DIR, "data", "ids")
-METADATA_PATH = os.path.join(BASE_DIR, "data", "metadata.json")
-
-# Retrieve metadata index
-@st.cache_data
-def load_metadata():
-    if os.path.exists(METADATA_PATH):
-        try:
-            with open(METADATA_PATH, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-metadata = load_metadata()
-
-# Initialize session state variables for state-syncing
-if 'input_source' not in st.session_state:
-    st.session_state.input_source = "sample"
-if 'selected_file' not in st.session_state:
-    st.session_state.selected_file = "id_0001.png"
-if 'uploaded_file_name' not in st.session_state:
-    st.session_state.uploaded_file_name = None
-if 'active_file_path' not in st.session_state:
-    st.session_state.active_file_path = os.path.join(IDS_DIR, "id_0001.png")
-if 'validated' not in st.session_state:
+# 2. Callbacks for Dropdowns & Inputs
+def on_test_doc_change():
+    """Callback when selected test document changes."""
+    st.session_state.active_doc_path = os.path.join(IDS_DIR, st.session_state.selected_test_file)
+    st.session_state.doc_source = 'test'
+    st.session_state.uploaded_file_obj = None
     st.session_state.validated = False
-if 'is_valid' not in st.session_state:
-    st.session_state.is_valid = True
-if 'violations' not in st.session_state:
-    st.session_state.violations = []
-if 'dob' not in st.session_state:
-    st.session_state.dob = None
-if 'issue' not in st.session_state:
-    st.session_state.issue = None
-if 'expiry' not in st.session_state:
-    st.session_state.expiry = None
-if 'raw_text' not in st.session_state:
-    st.session_state.raw_text = ""
-if 'is_sim' not in st.session_state:
-    st.session_state.is_sim = False
+    st.session_state.extraction_error = None
+    st.session_state.mrz = None
 
-# 3. Sidebar Branding & structured controls
+def on_real_doc_change():
+    """Callback when selected real document changes."""
+    if st.session_state.selected_real_file:
+        st.session_state.active_doc_path = os.path.join(REAL_IDS_DIR, st.session_state.selected_real_file)
+        st.session_state.doc_source = 'real'
+        st.session_state.uploaded_file_obj = None
+        st.session_state.validated = False
+        st.session_state.extraction_error = None
+        st.session_state.mrz = None
+
+def on_uploader_change():
+    """Callback when uploader document is added or cleared."""
+    uploaded_file = st.session_state.uploader_key
+    if uploaded_file is not None:
+        uploads_dir = os.path.join(BASE_DIR, "data", "uploads")
+        os.makedirs(uploads_dir, exist_ok=True)
+        saved_path = os.path.join(uploads_dir, uploaded_file.name)
+        with open(saved_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+            
+        st.session_state.active_doc_path = saved_path
+        st.session_state.uploaded_file_obj = uploaded_file
+        st.session_state.doc_source = 'upload'
+    else:
+        # Fallback to test document list
+        st.session_state.active_doc_path = os.path.join(IDS_DIR, st.session_state.selected_test_file)
+        st.session_state.uploaded_file_obj = None
+        st.session_state.doc_source = 'test'
+        
+    st.session_state.validated = False
+    st.session_state.extraction_error = None
+    st.session_state.mrz = None
+
+# 3. Callbacks for Buttons
+def on_generate_click():
+    """Callback to run ID card synthesis and update state indexes."""
+    label = random.choice(["Valid", "Frankenstein"])
+    v_or_f = "V" if label == "Valid" else "F"
+    id_num = f"{random.randint(1000, 9999)}"
+    
+    if label == "Valid":
+        dob, issue, expiry = generate_valid_dates()
+        flaw_type = "none"
+    else:
+        dob, issue, expiry, flaw_type = generate_frankenstein_dates()
+        
+    name = fake.name()
+    img = draw_id_card(id_num, name, dob, issue, expiry)
+    
+    filename = f"live_gen_{id_num}_{v_or_f}.png"
+    img.save(os.path.join(IDS_DIR, filename))
+    
+    metadata_entry = {
+        "id_number": f"ID-{id_num}",
+        "name": name,
+        "dob": dob.strftime("%Y-%m-%d"),
+        "issue_date": issue.strftime("%Y-%m-%d"),
+        "expiry_date": expiry.strftime("%Y-%m-%d"),
+        "label": label,
+        "flaw_type": flaw_type
+    }
+    
+    try:
+        with open(METADATA_PATH, "r") as f:
+            current_meta = json.load(f)
+    except Exception:
+        current_meta = {}
+        
+    current_meta[filename] = metadata_entry
+    with open(METADATA_PATH, "w") as f:
+        json.dump(current_meta, f, indent=4)
+        
+    st.cache_data.clear()
+    
+    # Force new generation selection
+    st.session_state.selected_test_file = filename
+    st.session_state.active_doc_path = os.path.join(IDS_DIR, filename)
+    st.session_state.doc_source = 'test'
+    st.session_state.uploaded_file_obj = None
+    st.session_state.validated = False
+    st.session_state.extraction_error = None
+    st.session_state.mrz = None
+
+def on_save_uploaded_click():
+    """Callback to save uploaded document image to real document folder."""
+    uploaded_file = st.session_state.uploaded_file_obj
+    if uploaded_file is not None:
+        os.makedirs(REAL_IDS_DIR, exist_ok=True)
+        real_path = os.path.join(REAL_IDS_DIR, uploaded_file.name)
+        with open(real_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+            
+        st.session_state.selected_real_file = uploaded_file.name
+        st.session_state.active_doc_path = real_path
+        st.session_state.doc_source = 'real'
+        st.session_state.uploaded_file_obj = None
+        st.session_state.validated = False
+        st.session_state.extraction_error = None
+        st.session_state.mrz = None
+
+# 4. Sidebar Layout & Branding
 st.sidebar.markdown("""
 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 25px;">
     <div style="background-color: #0F172A; border: 2px solid #0EA5E9; border-radius: 6px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; color: #0EA5E9; font-weight: bold; font-size: 16px;">
@@ -208,97 +326,41 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Upload Button Section
+# UPLOAD DOCUMENT Section
 st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 4px;'>UPLOAD DOCUMENT</div>", unsafe_allow_html=True)
-uploaded_file = st.sidebar.file_uploader("Upload ID Card Image", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
+st.sidebar.file_uploader(
+    "Upload ID Card Image",
+    type=["png", "jpg", "jpeg"],
+    label_visibility="collapsed",
+    key="uploader_key",
+    on_change=on_uploader_change
+)
 
-# Manage upload state transitions
-if uploaded_file is not None:
-    if st.session_state.uploaded_file_name != uploaded_file.name or st.session_state.input_source != "upload":
-        # Save file locally
-        uploads_dir = os.path.join(BASE_DIR, "data", "uploads")
-        os.makedirs(uploads_dir, exist_ok=True)
-        saved_path = os.path.join(uploads_dir, uploaded_file.name)
-        with open(saved_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-            
-        st.session_state.input_source = "upload"
-        st.session_state.uploaded_file_name = uploaded_file.name
-        st.session_state.active_file_path = saved_path
-        st.session_state.validated = False
-        st.rerun()
-elif uploaded_file is None and st.session_state.input_source == "upload":
-    # If the user clears the file, fallback to the selected sample
-    st.session_state.input_source = "sample"
-    st.session_state.active_file_path = os.path.join(IDS_DIR, st.session_state.selected_file)
-    st.session_state.uploaded_file_name = None
-    st.session_state.validated = False
-    st.rerun()
+# Display Save button if file is uploaded
+if st.session_state.uploaded_file_obj is not None:
+    st.sidebar.button(
+        "Save Uploaded Document",
+        type="secondary",
+        use_container_width=True,
+        on_click=on_save_uploaded_click
+    )
 
 # SYNTHETIC GENERATOR Section
 st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-top: 15px; margin-bottom: 4px;'>SYNTHETIC GENERATOR</div>", unsafe_allow_html=True)
-gen_btn = st.sidebar.button("Generate New ID", type="primary")
-
-if gen_btn:
-    # Randomly select label between Valid (V) and Frankenstein (F)
-    label = random.choice(["Valid", "Frankenstein"])
-    v_or_f = "V" if label == "Valid" else "F"
-    id_num = f"{random.randint(1000, 9999)}"
-    
-    # Generate dates based on logic
-    if label == "Valid":
-        dob, issue, expiry = generate_valid_dates()
-        flaw_type = "none"
-    else:
-        dob, issue, expiry, flaw_type = generate_frankenstein_dates()
-        
-    # Generate ID card image
-    name = fake.name()
-    img = draw_id_card(id_num, name, dob, issue, expiry)
-    
-    filename = f"live_gen_{id_num}_{v_or_f}.png"
-    img.save(os.path.join(IDS_DIR, filename))
-    
-    # Create metadata entry
-    metadata_entry = {
-        "id_number": f"ID-{id_num}",
-        "name": name,
-        "dob": dob.strftime("%Y-%m-%d"),
-        "issue_date": issue.strftime("%Y-%m-%d"),
-        "expiry_date": expiry.strftime("%Y-%m-%d"),
-        "label": label,
-        "flaw_type": flaw_type
-    }
-    
-    # Save back to metadata.json to support simulated fallback
-    try:
-        with open(METADATA_PATH, "r") as f:
-            current_meta = json.load(f)
-    except Exception:
-        current_meta = {}
-        
-    current_meta[filename] = metadata_entry
-    with open(METADATA_PATH, "w") as f:
-        json.dump(current_meta, f, indent=4)
-        
-    # Reload caching
-    st.cache_data.clear()
-    
-    # Immediately select and preview the new live generated document
-    st.session_state.input_source = "sample"
-    st.session_state.selected_file = filename
-    st.session_state.active_file_path = os.path.join(IDS_DIR, filename)
-    st.session_state.validated = False
-    st.rerun()
+st.sidebar.button(
+    "Generate New ID",
+    type="primary",
+    on_click=on_generate_click
+)
 
 # SEARCH DOCUMENTS Section
 st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-top: 15px; margin-bottom: 4px;'>SEARCH DOCUMENTS</div>", unsafe_allow_html=True)
 search_query = st.sidebar.text_input("🔍 Search query", placeholder="e.g. Canada, PP-4471, V", label_visibility="collapsed")
 
-# Sample Documents Dropdown Selection
+# TEST DOCUMENTS Section
 st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-top: 15px; margin-bottom: 8px;'>TEST DOCUMENTS</div>", unsafe_allow_html=True)
 
-# Standard mockups list
+# Standard mockups label list
 standard_samples = {
     "id_0001.png": ("PP-4471-A", "Passport · United States", "🟢"),
     "id_0501.png": ("DL-9920-C", "Driver License · Canada", "🔴"),
@@ -306,7 +368,7 @@ standard_samples = {
     "id_0502.png": ("PP-8830-Z", "Passport · Brazil", "🔴")
 }
 
-# Resolve all files dynamically
+# Resolve test files
 all_files = sorted(os.listdir(IDS_DIR)) if os.path.exists(IDS_DIR) else []
 standard_keys = ["id_0001.png", "id_0501.png", "id_0002.png", "id_0502.png"]
 live_gen_keys = sorted([f for f in all_files if f.startswith("live_gen_")], reverse=True)
@@ -314,7 +376,6 @@ other_keys = sorted([f for f in all_files if f.endswith(".png") and f not in sta
 
 sample_options = standard_keys + live_gen_keys + other_keys
 
-# Label formatting function mapping to Figma guidelines and LIVE GEN requirements
 def get_selectbox_label(filename):
     if filename in standard_samples:
         label, subtitle, dot = standard_samples[filename]
@@ -328,7 +389,7 @@ def get_selectbox_label(filename):
             return f"[LIVE GEN] {id_num}-{v_or_f} • National ID • Synthesia {dot}"
     return filename
 
-# Apply real-time search query filtering
+# Search filter
 if search_query:
     filtered_options = []
     for opt in sample_options:
@@ -338,42 +399,60 @@ if search_query:
     sample_options = filtered_options
 
 if sample_options:
-    current_idx = sample_options.index(st.session_state.selected_file) if st.session_state.selected_file in sample_options else 0
-
-    selected_sample = st.sidebar.selectbox(
+    # Ensure selectbox key holds a valid value from the options list
+    if st.session_state.selected_test_file not in sample_options:
+        st.session_state.selected_test_file = sample_options[0]
+        
+    current_test_idx = sample_options.index(st.session_state.selected_test_file)
+    st.sidebar.selectbox(
         "Choose Test Image",
         sample_options,
-        index=current_idx,
+        index=current_test_idx,
         format_func=get_selectbox_label,
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        key="selected_test_file",
+        on_change=on_test_doc_change
     )
-
-    # Update state if dropdown selection changes or user toggles back to samples
-    if selected_sample != st.session_state.selected_file or st.session_state.input_source != "sample":
-        st.session_state.input_source = "sample"
-        st.session_state.selected_file = selected_sample
-        st.session_state.active_file_path = os.path.join(IDS_DIR, selected_sample)
-        st.session_state.validated = False
-        st.rerun()
 else:
     st.sidebar.warning("No matching documents found.")
+
+# REAL DOCUMENTS Section
+st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-top: 15px; margin-bottom: 8px;'>REAL DOCUMENTS</div>", unsafe_allow_html=True)
+real_files = sorted([f for f in os.listdir(REAL_IDS_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]) if os.path.exists(REAL_IDS_DIR) else []
+
+if real_files:
+    if st.session_state.selected_real_file not in real_files:
+        st.session_state.selected_real_file = real_files[0]
+        
+    current_real_idx = real_files.index(st.session_state.selected_real_file)
+    st.sidebar.selectbox(
+        "Choose Real Image",
+        real_files,
+        index=current_real_idx,
+        label_visibility="collapsed",
+        key="selected_real_file",
+        on_change=on_real_doc_change
+    )
+else:
+    st.sidebar.info("No saved real documents.")
 
 # Sidebar Footer
 st.sidebar.markdown('<div class="sidebar-footer">Operator: A. Reyes &middot; Clearance L3</div>', unsafe_allow_html=True)
 
-# 4. Top Header Area (with dynamic Valid/Fraud status pills)
+# 5. Header Content
 h_col1, h_col2 = st.columns([2, 1])
 
 with h_col1:
-    # Determine the case number dynamically
-    if st.session_state.input_source == "upload":
+    if st.session_state.doc_source == 'upload':
         case_info = "Custom Document Intake"
-    elif st.session_state.selected_file.startswith("live_gen_"):
-        match = re.search(r'live_gen_(\d+)_([VF])\.png', st.session_state.selected_file)
+    elif st.session_state.doc_source == 'real':
+        case_info = f"Real Document Intake &middot; {st.session_state.selected_real_file}"
+    elif st.session_state.selected_test_file.startswith("live_gen_"):
+        match = re.search(r'live_gen_(\d+)_([VF])\.png', st.session_state.selected_test_file)
         id_num = match.group(1) if match else "XXXX"
         case_info = f"Live Session #GEN-{id_num} &middot; Semantic Logic Execution"
     else:
-        case_num = "001" if st.session_state.selected_file == "id_0001.png" else "002" if st.session_state.selected_file == "id_0501.png" else "003" if st.session_state.selected_file == "id_0002.png" else "004"
+        case_num = "001" if st.session_state.selected_test_file == "id_0001.png" else "002" if st.session_state.selected_test_file == "id_0501.png" else "003" if st.session_state.selected_test_file == "id_0002.png" else "004"
         case_info = f"Case #DOC-{case_num} &middot; Semantic Logic Execution"
         
     st.markdown(f"""
@@ -384,7 +463,6 @@ with h_col1:
     """, unsafe_allow_html=True)
 
 with h_col2:
-    # Color-coded active pill logic
     is_eval = st.session_state.validated
     is_legit = st.session_state.is_valid
     
@@ -400,11 +478,10 @@ with h_col2:
 
 st.markdown("<hr style='border: 0; border-top: 1px solid #2D3748; margin-top: 15px; margin-bottom: 20px;' />", unsafe_allow_html=True)
 
-# 5. Two Column Dashboard Layout
+# 6. Columns Layout
 col1, col2 = st.columns([1, 1.2], gap="large")
 
 with col1:
-    # Document Preview Header
     st.markdown("""
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 0 4px;">
         <div style="display: flex; align-items: center; gap: 8px;">
@@ -418,8 +495,15 @@ with col1:
     </div>
     """, unsafe_allow_html=True)
     
-    if st.session_state.active_file_path and os.path.exists(st.session_state.active_file_path):
-        img = Image.open(st.session_state.active_file_path)
+    # Preview rendering logic reading strictly from state variables
+    if st.session_state.doc_source == 'upload' and st.session_state.uploaded_file_obj is not None:
+        try:
+            img = Image.open(st.session_state.uploaded_file_obj)
+            st.image(img, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error loading uploaded image: {str(e)}")
+    elif st.session_state.active_doc_path and os.path.exists(st.session_state.active_doc_path):
+        img = Image.open(st.session_state.active_doc_path)
         st.image(img, use_container_width=True)
     else:
         st.info("Intake image preview unavailable.")
@@ -429,19 +513,26 @@ with col2:
     
     if run_btn:
         with st.spinner("Extracting & running checks..."):
-            # Run OCR on the active file path to guarantee correct document logic
-            dob, issue, expiry, raw_text, is_sim = run_ocr_pipeline(st.session_state.active_file_path, metadata)
-            is_valid, violations = validate_dates(dob, issue, expiry, REF_DATE)
-            
-            # Store results in session state
-            st.session_state.validated = True
-            st.session_state.is_valid = is_valid
-            st.session_state.violations = violations
-            st.session_state.dob = dob
-            st.session_state.issue = issue
-            st.session_state.expiry = expiry
-            st.session_state.raw_text = raw_text
-            st.session_state.is_sim = is_sim
+            try:
+                # OCR validator runs strictly on the active path
+                dob, issue, expiry, raw_text, is_sim = run_ocr_pipeline(st.session_state.active_doc_path, metadata)
+                is_valid, violations = validate_dates(dob, issue, expiry, REF_DATE)
+                mrz = extract_mrz(raw_text)
+                
+                # Store results in session state
+                st.session_state.validated = True
+                st.session_state.is_valid = is_valid
+                st.session_state.violations = violations
+                st.session_state.dob = dob
+                st.session_state.issue = issue
+                st.session_state.expiry = expiry
+                st.session_state.raw_text = raw_text
+                st.session_state.is_sim = is_sim
+                st.session_state.mrz = mrz
+                st.session_state.extraction_error = None
+            except Exception as e:
+                st.session_state.validated = False
+                st.session_state.extraction_error = f"Verification Failed: Unrecognized Document Format or Unreadable Data. ({str(e)})"
             st.rerun()
 
     # If evaluated, build the custom cards
@@ -512,15 +603,31 @@ with col2:
             </table>
         </div>
         """
-        # Strip indentation using textwrap.dedent to prevent raw HTML code blocks leak
         st.markdown(textwrap.dedent(meta_html), unsafe_allow_html=True)
         
         # Compute exact mathematical output details for the logic list
         is_chron_passed = (dob and issue and expiry and issue < expiry and dob <= issue)
         chron_txt = f"{issue.year} &lt; {expiry.year} · consistent" if is_chron_passed else "inconsistent chronology"
         
-        is_auth_passed = True
-        auth_txt = "Checksum valid"
+        # Safeguard Authenticity / MRZ check logic from empty or missing zones
+        mrz = st.session_state.get('mrz')
+        if mrz is None:
+            is_auth_passed = False
+            auth_txt = "MRZ Not Found"
+        else:
+            try:
+                # Document verification: check if ID number from raw_text or data matches line 1
+                id_match = re.search(r'ID\s+NUMBER:?\s*ID-(.*)', raw_text, re.IGNORECASE)
+                clean_id = id_match.group(1).strip() if id_match else ""
+                if clean_id and clean_id in "".join(mrz):
+                    is_auth_passed = True
+                    auth_txt = "MRZ checksum & format verified"
+                else:
+                    is_auth_passed = False
+                    auth_txt = "MRZ payload mismatch"
+            except Exception:
+                is_auth_passed = False
+                auth_txt = "MRZ validation error"
         
         age_at_issue = issue.year - dob.year - ((issue.month, issue.day) < (dob.month, dob.day)) if (dob and issue) else 0
         is_age_passed = (age_at_issue >= 18)
@@ -529,7 +636,7 @@ with col2:
         is_expiry_passed = (expiry and expiry >= REF_DATE)
         expiry_txt = f"Valid until {expiry.year}" if is_expiry_passed else f"Expired on {expiry.strftime('%Y-%m-%d')}"
         
-        # Logic Rule checklist HTML Builder with strict indentation stripping to prevent block leaks
+        # Logic Rule checklist HTML Builder
         def make_rule_row(title, desc, math_text, is_passed):
             icon = "✓" if is_passed else "×"
             icon_bg = "#064E3B" if is_passed else "#7F1D1D"
@@ -569,7 +676,6 @@ with col2:
             </table>
         </div>
         """
-        # Strip markdown leading spaces block formatting
         st.markdown(textwrap.dedent(rules_html), unsafe_allow_html=True)
         
         # Final Verdict Banners (Matching Figma screens exactly)
@@ -584,7 +690,6 @@ with col2:
             </div>
             """, unsafe_allow_html=True)
         else:
-            # Join rules violations into a concise comma-separated string
             violation_str = "; ".join(violations)
             st.markdown(f"""
             <div style="background-color: #7F1D1D; border: 1px solid #EF4444; padding: 16px; border-radius: 8px; display: flex; align-items: flex-start; gap: 12px;">
@@ -595,5 +700,15 @@ with col2:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+    elif st.session_state.get('extraction_error'):
+        st.markdown(f"""
+        <div style="background-color: #7F1D1D; border: 1px solid #EF4444; padding: 16px; border-radius: 8px; display: flex; align-items: flex-start; gap: 12px; margin-top: 15px;">
+            <div style="background-color: #7F1D1D; color: #EF4444; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; margin-top: 2px;">!</div>
+            <div>
+                <div style="font-weight: 700; color: #FCA5A5; font-size: 14px;">🚨 VERIFICATION SYSTEM ERROR</div>
+                <div style="color: #FECACA; font-size: 12px; margin-top: 2px;">{st.session_state.extraction_error}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
         st.info("Intake console standing by. Run the engine to parse metadata and check constraints.")
