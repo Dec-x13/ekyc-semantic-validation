@@ -1,0 +1,8 @@
+opencv-python>=4.8.0
+pytesseract>=0.3.10
+Faker>=19.0.0
+pillow>=10.0.0
+scikit-learn>=1.3.0
+python-dateutil>=2.8.2
+rich>=13.5.0
+streamlit>=1.26.0
