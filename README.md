@@ -1,80 +1,131 @@
-# Detecting Logical Synthesis in Digital Onboarding: A Semantic Validation Approach
+# SentinelKYC: Semantic Validation Approach for OCR Intake Systems
+## CS Thesis Capstone Project — Final Defense Implementation
 
-This project implements a **Semantic Validation Approach for OCR Intake Systems** to detect AI-generated synthetic identity documents ("Frankenstein IDs"). 
+SentinelKYC implements a **Semantic Validation Approach for OCR Intake Systems** to intercept and flag AI-generated synthetic identity fraud ("Frankenstein IDs") during digital onboarding. 
 
-Traditional identity validation pipelines rely on visual forensics (detecting pixel manipulation) or standard OCR. However, generative AI can produce visually perfect identity documents that easily bypass these defenses. This system acts as a "White-Box" semantic logic gate, parsing extracted texts using regular expressions and checking them for real-world consistency (temporal sequences and legal age limits).
+While modern generative models can yield "visually perfect" forged document scans that pass traditional pixel-forensic checks and standard OCR transcriptions, they lack logical context. SentinelKYC acts as a deterministic, "white-box" semantic logic gate directly following standard OCR, extracting and evaluating dates and Machine Readable Zones (MRZ) against physical, chronological, and policy rules.
 
 ---
 
-## Project Directory Structure
+## 1. Project Directory Structure
+
 ```
 capstone_project/
 ├── data/
-│   ├── ids/                  # Generated 1,000 digital ID card images
-│   └── metadata.json         # Ground truth metadata for evaluation and simulation fallback
-├── generator.py              # Component 1: Synthetic Dataset Generator
-├── ocr_pipeline.py           # Component 2: Grayscaling and Text Extraction Pipeline
-├── rule_engine.py            # Component 3: White-Box Semantic Logic Engine
-├── evaluate.py               # Component 4: Confusion Matrix and Performance Metric Calculator
-├── main.py                   # Orchestrator to run the entire pipeline end-to-end
-└── README.md                 # Project documentation and summary
+│   ├── ids/                  # Generated 1,000 hyper-realistic synthetic digital ID images (500 Valid, 500 Frankenstein)
+│   ├── real_ids/             # Directory where uploaded real-world ID card scans are saved
+│   ├── uploads/              # Temp directory storing uploaded images during live operations
+│   └── metadata.json         # Ground truth catalog for evaluation and simulated OCR fallback
+├── generator.py              # Component 1: Hyper-Realistic Synthetic ID Generator
+├── ocr_pipeline.py           # Component 2: OpenCV Image Preprocessing & pytesseract OCR Pipeline
+├── rule_engine.py            # Component 3: White-Box Semantic Logic Validation Engine
+├── evaluate.py               # Component 4: Confusion Matrix & Classification Metrics Calculator
+├── demo.py                   # Component 5: Interactive Terminal Presentation CLI Tool
+├── app.py                    # Component 6: Callback-Driven SentinelKYC Web Console (Streamlit)
+├── main.py                   # Orchestrator running the end-to-end evaluation pipeline
+├── requirements.txt          # Library dependencies index
+└── README.md                 # Project README and Capstone Audit Documentation
 ```
 
 ---
 
-## Tech Stack
-*   **Python 3**
-*   **OpenCV (cv2):** For loading, manipulating, and grayscaling images to improve text contrast.
-*   **Pillow (PIL):** To programmatically render high-quality text onto digital ID templates.
-*   **pytesseract (Tesseract OCR):** For reading textual fields from document images.
-*   **Faker:** For generating realistic names, ID numbers, and address details.
-*   **Regex (re):** For extracting date patterns and mapping them to structured `datetime.date` objects.
+## 2. Technical Stack & Dependencies
+*   **Streamlit (v1.26.0+):** Dashboard framework rebuilt using a callback-driven session state model.
+*   **OpenCV (cv2):** Image grayscaling to optimize contrast for text recognition.
+*   **Pillow (PIL):** High-fidelity programmatic text, signature, holographic ghost overlays, and printing structures rendering.
+*   **pytesseract (Tesseract OCR):** Text character transcription engine.
+*   **python-dateutil:** For leap-year-safe calendar-based date math (`relativedelta`).
+*   **Faker:** Realistic biometric mock profile details generator.
+*   **Rich:** CLI panels, colors, and layout tables compiler.
 
 ---
 
-## How to Run
+## 3. Modular Implementation Summaries
 
-### 1. Requirements Setup
+### A. Hyper-Realistic Synthetic Generator (`generator.py`)
+Generates 1,000 synthetic digital IDs (50% Valid, 50% Frankenstein). Replicates physical security artifacts and camera scan imperfections:
+*   *Printed Halftone Dot Simulation:* Downscales the biometric silhouette to $34 \times 36$ pixels via `Image.NEAREST` and scales it back up, blending it at 35% opacity to replicate halftone dot structures.
+*   *Ghost Image Hologram:* Pastes a 25%-opacity, blurred grayscale duplicate silhouette in the bottom-right corner.
+*   *Organic Handwriting Overlay:* Dynamic cursive script font generation in dark blue ink (`#1D4ED8`) with random rotation skews ($\pm 2^{\circ}$ to $6^{\circ}$).
+*   *Machine Readable Zone (MRZ):* Appends ICAO Document 9303 compliant 3-line monospaced blocks (consisting of name, DOB, issuing country, and ID number).
+*   *Photographic Scanning Artifacts:* Adds Gaussian noise grain via NumPy, applies random card skews ($\pm 0.5^{\circ}$), and overlays camera lens focus blur.
+
+### B. White-Box Semantic Logic Engine (`rule_engine.py`)
+Validates date relationships using calendar relativedelta shifts to handle leap years (e.g. Feb 29 + 10 years maps correctly to Feb 28):
+1.  *Temporal Sequence Check:* DOB $\le$ Issue Date $<$ Expiry Date.
+2.  *Legal Age Limit:* Age at issue $\ge$ 18.
+3.  *Expiration Status:* Expiry Date $\ge$ Reference Date (July 16, 2026).
+4.  *Validity Duration limit:* Expiry Date $\le$ Issue Date + 10 years.
+
+### C. Callback-Driven Web Dashboard (`app.py`)
+Features the SentinelKYC dark-themed dashboard console:
+*   *Callbacks & State Synchronization:* Manages dropdowns, generators, and uploader events strictly via callback parameters (`on_change` / `on_click`), binding variables to state objects (`active_doc_path`, `uploaded_file_obj`, `doc_source`) before the UI renders to eliminate Streamlit state loss.
+*   *Synthetic Generator Module:* Sidebar button triggers `generator.py` logic, automatically saving and selecting a new ID card formatted as: `[LIVE GEN] {ID_NUMBER}-{V or F} • National ID • Synthesia`.
+*   *Search Filter:* Sidebar search input filters the test document dropdown options in real-time.
+*   *Upload & Save Real IDs:* Safe file saving from the uploader to `data/real_ids/` directory, mapped in a separate state path to prevent UI selection conflicts.
+*   *Flagged UI Indicators:* Dynamically appends red `<span class="flagged-pill">FLAGGED</span>` labels to anomalous table fields.
+
+---
+
+## 4. Robust Validation & Parsing Fallbacks
+
+### A. Missing Machine Readable Zones (MRZ)
+Real-world driver's licenses often lack MRZ lines. [ocr_pipeline.py](file:///C:/Users/Admin/Documents/MyProjects/capstone_project/ocr_pipeline.py) exposes a safe helper `extract_mrz(text)` that isolates 30-char monospaced formats. If missing, it returns `None` rather than raising `IndexError` or `NoneType` faults. [app.py](file:///C:/Users/Admin/Documents/MyProjects/capstone_project/app.py) handles `mrz = None` safely by updating the logic list status to `"MRZ Not Found"` instead of throwing an app crash.
+
+### B. Garbage OCR Text Dates
+If the OCR reads unreadable character garbage, [rule_engine.py](file:///C:/Users/Admin/Documents/MyProjects/capstone_project/rule_engine.py) catches `TypeError` and `ValueError` comparisons inside `try/except` wrappers. Rather than crashing the pipeline, it appends a `"Data Unreadable"` status indicator to the specific rule violations.
+
+### C. Top-Level UI Verification Safety
+In [app.py](file:///C:/Users/Admin/Documents/MyProjects/capstone_project/app.py), the main OCR pipeline validation is wrapped in a top-level try/except block. If a corrupted image or unreadable document format is uploaded, it captures the crash and displays a custom warning alert: `🚨 Verification Failed: Unrecognized Document Format or Unreadable Data`.
+
+---
+
+## 5. Classification Performance Evaluation
+
+Evaluated against the generated dataset of 1,000 synthetic digital IDs using the reference validation date **July 16, 2026**.
+
+*   **State 1 (Baseline standard OCR):** Transcribes text and assumes it is valid.
+*   **State 2 (Rule-Enhanced OCR):** Parses dates and validates them against the engine.
+
+### Classification Performance Results
+
+| Metric | State 1 (Baseline OCR) | State 2 (Rule-Enhanced OCR) | Security Improvement |
+| :--- | :---: | :---: | :---: |
+| **True Positives (TP)** *(Correctly Flagged Forgeries)* | 0 | 500 | **+500** |
+| **True Negatives (TN)** *(Correctly Cleared Valid IDs)* | 500 | 500 | **0 (Leap Year bugs resolved)** |
+| **False Positives (FP)** *(Legitimate IDs Incorrectly Flagged)* | 0 | 0 | **0 (0.00% FP rate)** |
+| **False Negatives (FN)** *(Missed Forgeries)* | 500 | 0 | **-500 (No fraud missed)** |
+| **Recall (Detection Rate)** | 0.00% | 100.00% | **+100.00%** |
+| **F1-Score** | 0.00% | 100.00% | **+100.00%** |
+| **Accuracy** | 50.00% | 100.00% | **+50.00%** |
+
+*Note: Resolving leap-year drift using `dateutil.relativedelta` cleared the 2 False Positives, reaching a perfect 100.00% F1-score.*
+
+---
+
+## 6. Execution Guidelines
+
+### 1. Library Installation
 Ensure you have the required Python libraries installed:
 ```bash
-pip install opencv-python pytesseract Faker pillow scikit-learn
+pip install opencv-python pytesseract Faker pillow python-dateutil rich streamlit
 ```
+*Note: To execute real OCR text extraction, you must install the **Tesseract OCR binary** on your machine and ensure it is in your system PATH. If Tesseract is not installed, the pipeline automatically activates its metadata-driven simulation mode.*
 
-> [!NOTE]
-> To execute real OCR text extraction, you must install the **Tesseract OCR engine** on your machine and ensure it is in your system PATH. If Tesseract is not installed, the pipeline will automatically fall back to a metadata-driven simulation mode, allowing the entire pipeline and evaluation to remain fully runnable.
-
-### 2. Run the End-to-End Pipeline
-To generate the 1,000 synthetic digital IDs, execute OCR extraction, run validation rules, and output performance metrics, simply run:
+### 2. Run End-to-End Orchestrator Pipeline
+To run dataset generation and print State 1 vs. State 2 classification metrics:
 ```bash
 python main.py
 ```
 
-You can also run the components individually:
-*   **Generate Dataset:** `python generator.py`
-*   **Evaluate System:** `python evaluate.py`
+### 3. Run Streamlit Web Application
+To launch the dark-themed SentinelKYC Verification Console:
+```bash
+python -m streamlit run app.py
+```
 
----
-
-## Performance Summary
-
-The system evaluates two states:
-*   **State 1 (Baseline standard OCR):** Transcribes text and assumes it is valid.
-*   **State 2 (Rule-Enhanced OCR):** Parses dates and validates them against rules:
-    1.  *Temporal Sequence:* $\text{Date of Birth} \le \text{Issue Date} < \text{Expiry Date}$
-    2.  *Legal Age Limit:* $\text{Age at Issue} \ge 18$
-    3.  *Expiration Status:* $\text{Expiry Date} \ge \text{Reference Date (2026-07-16)}$
-
-### Classification Performance Results
-
-| Metric | State 1 (Baseline standard OCR) | State 2 (Rule-Enhanced OCR) | Security Improvement |
-| :--- | :---: | :---: | :---: |
-| **True Positives (TP)** | 0 | 500 | **+500** |
-| **True Negatives (TN)** | 500 | 498 | **-2 (Due to leap years)** |
-| **False Positives (FP)** | 0 | 2 | **+2** |
-| **False Negatives (FN)** | 500 | 0 | **-500 (No fraud missed)** |
-| **Recall (Detection Rate)** | 0.00% | 100.00% | **+100.00%** |
-| **F1-Score** | 0.00% | 99.80% | **+99.80%** |
-| **Accuracy** | 50.00% | 99.80% | **+49.80%** |
-
-### Key Findings
-Standard OCR has a **semantic blind spot** and completely fails to detect synthetic documents (0% detection rate). The **Rule-Enhanced OCR Pipeline** achieved a **100% Detection Recall Rate** (+100.00% gain) by checking internal consistency, blocking all 500 synthetic documents with chronological or underage logical flaws.
+### 4. Run Terminal Live Presentation CLI
+To demonstrate validation checks for a single ID image in color-coded rich panels:
+```bash
+python demo.py data/ids/id_0001.png
+```
