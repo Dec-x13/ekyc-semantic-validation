@@ -80,6 +80,31 @@ def extract_dates(text):
             
     return dob, issue, expiry
 
+def extract_mrz(text):
+    """
+    Safely extracts Machine Readable Zone (MRZ) lines from text.
+    If MRZ is not found or is incomplete, returns None.
+
+    Parameters:
+    ----------
+    text : str
+        Raw text extracted from OCR.
+
+    Returns:
+    -------
+    list of str or None
+        List containing the 3 MRZ lines, or None if not detected.
+    """
+    try:
+        # Match lines of exactly 30 characters consisting of A-Z, 0-9, and '<'
+        lines = [line.strip() for line in text.split('\n') if re.match(r'^[A-Z0-9<]{30}$', line.strip())]
+        if len(lines) >= 3:
+            # Return the last 3 lines (which correspond to the MRZ band)
+            return lines[-3:]
+    except Exception:
+        pass
+    return None
+
 def run_ocr_pipeline(image_path, metadata_cache=None):
     """
     Runs the image loading, grayscale preprocessing, OCR, and Regex parsing.
@@ -150,6 +175,14 @@ def run_ocr_pipeline(image_path, metadata_cache=None):
                 f"ISSUE DATE: {data['issue_date']}\n"
                 f"EXPIRY DATE: {data['expiry_date']}\n"
             )
+            # Append simulated MRZ lines for fallback
+            try:
+                from generator import generate_mrz_lines
+                dob_obj = datetime.strptime(data['dob'], "%Y-%m-%d").date()
+                mrz_lines = generate_mrz_lines(data['id_number'].replace("ID-", ""), data['name'], dob_obj)
+                text += "\n" + "\n".join(mrz_lines) + "\n"
+            except Exception:
+                pass
         else:
             raise RuntimeError(
                 f"Tesseract OCR is not installed, and metadata cache for {filename} is missing. "

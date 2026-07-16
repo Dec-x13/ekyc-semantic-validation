@@ -49,44 +49,59 @@ def validate_dates(dob, issue_date, expiry_date, reference_date=None):
     # 3. Temporal Sequence Validation (Physical Chronology)
     # Proof: A document cannot be issued before the cardholder is born.
     # Mathematical expression: Issue Date >= DOB
-    if issue_date < dob:
-        violations.append("Temporal sequence violation: Issue Date is before Date of Birth")
+    try:
+        if issue_date < dob:
+            violations.append("Temporal sequence violation: Issue Date is before Date of Birth")
+    except (ValueError, TypeError) as e:
+        violations.append(f"Temporal Sequence check failed: Data Unreadable ({str(e)})")
         
     # Proof: A document's expiration date must be strictly after its issue date.
     # Mathematical expression: Expiry Date > Issue Date
-    if expiry_date <= issue_date:
-        violations.append("Temporal sequence violation: Expiry Date is on or before Issue Date")
+    try:
+        if expiry_date <= issue_date:
+            violations.append("Temporal sequence violation: Expiry Date is on or before Issue Date")
+    except (ValueError, TypeError) as e:
+        violations.append(f"Expiry Sequence check failed: Data Unreadable ({str(e)})")
         
     # 4. Legal Age Verification
     # Proof: The cardholder must satisfy the legal age requirement at the time of document issue.
     # We use dateutil.relativedelta to calculate the exact calendar age, which handles leap years
     # flawlessly (including Feb 29 birthdates mapping to Feb 28 in non-leap years).
     # Mathematical expression: Age at Issue = relativedelta(Issue Date, DOB).years >= 18
-    age_at_issue = relativedelta(issue_date, dob).years
-    if age_at_issue < 18:
-        violations.append(
-            f"Age requirement mathematically violated: Person was only {age_at_issue} "
-            f"years old at the time of issue (minimum 18 required)"
-        )
+    try:
+        age_at_issue = relativedelta(issue_date, dob).years
+        if age_at_issue < 18:
+            violations.append(
+                f"Age requirement mathematically violated: Person was only {age_at_issue} "
+                f"years old at the time of issue (minimum 18 required)"
+            )
+    except (ValueError, TypeError) as e:
+        violations.append(f"Legal Age Verification check failed: Data Unreadable ({str(e)})")
         
     # 5. Expiration Status Check
     # Proof: An identity document submitted for intake must be current and not expired.
     # Mathematical expression: Expiry Date >= Reference Date
-    if expiry_date < reference_date:
-        violations.append(
-            f"Expiry date in the past: Document expired on {expiry_date.strftime('%Y-%m-%d')} "
-            f"(reference date is {reference_date.strftime('%Y-%m-%d')})"
-        )
+    try:
+        if expiry_date < reference_date:
+            violations.append(
+                f"Expiry date in the past: Document expired on {expiry_date.strftime('%Y-%m-%d')} "
+                f"(reference date is {reference_date.strftime('%Y-%m-%d')})"
+            )
+    except (ValueError, TypeError) as e:
+        violations.append(f"Expiry Status check failed: Data Unreadable ({str(e)})")
         
     # 6. Validity Period Check (Optional Policy Rule)
     # Proof: Standard digital ID cards are issued for a maximum validity period of 10 years.
     # Mathematical expression: Expiry Date <= Issue Date + 10 calendar years
-    max_expiry_date = issue_date + relativedelta(years=10)
-    if expiry_date > max_expiry_date:
-        violations.append(
-            f"Validity duration anomaly: Document validity period exceeds maximum limit of 10 years "
-            f"(Expiry: {expiry_date.strftime('%Y-%m-%d')}, Max Allowed Expiry: {max_expiry_date.strftime('%Y-%m-%d')})"
-        )
+    try:
+        max_expiry_date = issue_date + relativedelta(years=10)
+        if expiry_date > max_expiry_date:
+            violations.append(
+                f"Validity duration anomaly: Document validity period exceeds maximum limit of 10 years "
+                f"(Expiry: {expiry_date.strftime('%Y-%m-%d')}, Max Allowed Expiry: {max_expiry_date.strftime('%Y-%m-%d')})"
+            )
+    except (ValueError, TypeError) as e:
+        violations.append(f"Validity Period check failed: Data Unreadable ({str(e)})")
         
     is_valid = len(violations) == 0
     return is_valid, violations
