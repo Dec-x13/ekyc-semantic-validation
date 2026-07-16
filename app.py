@@ -2,11 +2,13 @@ import os
 import datetime
 import re
 import json
+import random
 import textwrap
 import streamlit as st
 from PIL import Image
 from ocr_pipeline import run_ocr_pipeline
 from rule_engine import validate_dates
+from generator import draw_id_card, generate_valid_dates, generate_frankenstein_dates, fake
 
 # 1. Global Page Configuration
 st.set_page_config(
@@ -99,7 +101,25 @@ st.markdown("""
         letter-spacing: 0.05em !important;
     }
     
-    /* Primary action button at right column */
+    /* Primary action button at right column & sidebar */
+    button[data-testid="baseButton-primary"] {
+        background-color: #0EA5E9 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        font-size: 14px !important;
+        padding: 10px 20px !important;
+        width: 100% !important;
+        box-shadow: 0 4px 6px rgba(14, 165, 233, 0.15) !important;
+        transition: all 0.2s ease-in-out !important;
+    }
+    button[data-testid="baseButton-primary"]:hover {
+        background-color: #38BDF8 !important;
+        filter: brightness(1.15) !important;
+    }
+    
+    /* Custom secondary styling for standard column buttons */
     div[data-testid="column"] button {
         background-color: #0EA5E9 !important;
         color: #FFFFFF !important;
@@ -215,36 +235,128 @@ elif uploaded_file is None and st.session_state.input_source == "upload":
     st.session_state.validated = False
     st.rerun()
 
+# SYNTHETIC GENERATOR Section
+st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-top: 15px; margin-bottom: 4px;'>SYNTHETIC GENERATOR</div>", unsafe_allow_html=True)
+gen_btn = st.sidebar.button("Generate New ID", type="primary")
+
+if gen_btn:
+    # Randomly select label between Valid (V) and Frankenstein (F)
+    label = random.choice(["Valid", "Frankenstein"])
+    v_or_f = "V" if label == "Valid" else "F"
+    id_num = f"{random.randint(1000, 9999)}"
+    
+    # Generate dates based on logic
+    if label == "Valid":
+        dob, issue, expiry = generate_valid_dates()
+        flaw_type = "none"
+    else:
+        dob, issue, expiry, flaw_type = generate_frankenstein_dates()
+        
+    # Generate ID card image
+    name = fake.name()
+    img = draw_id_card(id_num, name, dob, issue, expiry)
+    
+    filename = f"live_gen_{id_num}_{v_or_f}.png"
+    img.save(os.path.join(IDS_DIR, filename))
+    
+    # Create metadata entry
+    metadata_entry = {
+        "id_number": f"ID-{id_num}",
+        "name": name,
+        "dob": dob.strftime("%Y-%m-%d"),
+        "issue_date": issue.strftime("%Y-%m-%d"),
+        "expiry_date": expiry.strftime("%Y-%m-%d"),
+        "label": label,
+        "flaw_type": flaw_type
+    }
+    
+    # Save back to metadata.json to support simulated fallback
+    try:
+        with open(METADATA_PATH, "r") as f:
+            current_meta = json.load(f)
+    except Exception:
+        current_meta = {}
+        
+    current_meta[filename] = metadata_entry
+    with open(METADATA_PATH, "w") as f:
+        json.dump(current_meta, f, indent=4)
+        
+    # Reload caching
+    st.cache_data.clear()
+    
+    # Immediately select and preview the new live generated document
+    st.session_state.input_source = "sample"
+    st.session_state.selected_file = filename
+    st.session_state.active_file_path = os.path.join(IDS_DIR, filename)
+    st.session_state.validated = False
+    st.rerun()
+
+# SEARCH DOCUMENTS Section
+st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-top: 15px; margin-bottom: 4px;'>SEARCH DOCUMENTS</div>", unsafe_allow_html=True)
+search_query = st.sidebar.text_input("🔍 Search query", placeholder="e.g. Canada, PP-4471, V", label_visibility="collapsed")
+
 # Sample Documents Dropdown Selection
 st.sidebar.markdown("<div style='color: #828FA3; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; margin-top: 15px; margin-bottom: 8px;'>TEST DOCUMENTS</div>", unsafe_allow_html=True)
 
-samples = [
-    ("PP-4471-A", "Passport · United States", "🟢", "id_0001.png"),
-    ("DL-9920-C", "Driver License · Canada", "🔴", "id_0501.png"),
-    ("ID-3312-B", "National ID · Germany", "🟢", "id_0002.png"),
-    ("PP-8830-Z", "Passport · Brazil", "🔴", "id_0502.png")
-]
+# Standard mockups list
+standard_samples = {
+    "id_0001.png": ("PP-4471-A", "Passport · United States", "🟢"),
+    "id_0501.png": ("DL-9920-C", "Driver License · Canada", "🔴"),
+    "id_0002.png": ("ID-3312-B", "National ID · Germany", "🟢"),
+    "id_0502.png": ("PP-8830-Z", "Passport · Brazil", "🔴")
+}
 
-sample_options = [fname for label, subtitle, dot, fname in samples]
-sample_labels = {fname: f"{label} · {subtitle} {dot}" for label, subtitle, dot, fname in samples}
+# Resolve all files dynamically
+all_files = sorted(os.listdir(IDS_DIR)) if os.path.exists(IDS_DIR) else []
+standard_keys = ["id_0001.png", "id_0501.png", "id_0002.png", "id_0502.png"]
+live_gen_keys = sorted([f for f in all_files if f.startswith("live_gen_")], reverse=True)
+other_keys = sorted([f for f in all_files if f.endswith(".png") and f not in standard_keys and f not in live_gen_keys])
 
-current_idx = sample_options.index(st.session_state.selected_file) if st.session_state.selected_file in sample_options else 0
+sample_options = standard_keys + live_gen_keys + other_keys
 
-selected_sample = st.sidebar.selectbox(
-    "Choose Test Image",
-    sample_options,
-    index=current_idx,
-    format_func=lambda x: sample_labels.get(x, x),
-    label_visibility="collapsed"
-)
+# Label formatting function mapping to Figma guidelines and LIVE GEN requirements
+def get_selectbox_label(filename):
+    if filename in standard_samples:
+        label, subtitle, dot = standard_samples[filename]
+        return f"{label} · {subtitle} {dot}"
+    elif filename.startswith("live_gen_"):
+        match = re.search(r'live_gen_(\d+)_([VF])\.png', filename)
+        if match:
+            id_num = match.group(1)
+            v_or_f = match.group(2)
+            dot = "🟢" if v_or_f == "V" else "🔴"
+            return f"[LIVE GEN] {id_num}-{v_or_f} • National ID • Synthesia {dot}"
+    return filename
 
-# Update state if dropdown selection changes or user toggles back to samples
-if selected_sample != st.session_state.selected_file or st.session_state.input_source != "sample":
-    st.session_state.input_source = "sample"
-    st.session_state.selected_file = selected_sample
-    st.session_state.active_file_path = os.path.join(IDS_DIR, selected_sample)
-    st.session_state.validated = False
-    st.rerun()
+# Apply real-time search query filtering
+if search_query:
+    filtered_options = []
+    for opt in sample_options:
+        label_text = get_selectbox_label(opt)
+        if search_query.lower() in label_text.lower() or search_query.lower() in opt.lower():
+            filtered_options.append(opt)
+    sample_options = filtered_options
+
+if sample_options:
+    current_idx = sample_options.index(st.session_state.selected_file) if st.session_state.selected_file in sample_options else 0
+
+    selected_sample = st.sidebar.selectbox(
+        "Choose Test Image",
+        sample_options,
+        index=current_idx,
+        format_func=get_selectbox_label,
+        label_visibility="collapsed"
+    )
+
+    # Update state if dropdown selection changes or user toggles back to samples
+    if selected_sample != st.session_state.selected_file or st.session_state.input_source != "sample":
+        st.session_state.input_source = "sample"
+        st.session_state.selected_file = selected_sample
+        st.session_state.active_file_path = os.path.join(IDS_DIR, selected_sample)
+        st.session_state.validated = False
+        st.rerun()
+else:
+    st.sidebar.warning("No matching documents found.")
 
 # Sidebar Footer
 st.sidebar.markdown('<div class="sidebar-footer">Operator: A. Reyes &middot; Clearance L3</div>', unsafe_allow_html=True)
@@ -256,6 +368,10 @@ with h_col1:
     # Determine the case number dynamically
     if st.session_state.input_source == "upload":
         case_info = "Custom Document Intake"
+    elif st.session_state.selected_file.startswith("live_gen_"):
+        match = re.search(r'live_gen_(\d+)_([VF])\.png', st.session_state.selected_file)
+        id_num = match.group(1) if match else "XXXX"
+        case_info = f"Live Session #GEN-{id_num} &middot; Semantic Logic Execution"
     else:
         case_num = "001" if st.session_state.selected_file == "id_0001.png" else "002" if st.session_state.selected_file == "id_0501.png" else "003" if st.session_state.selected_file == "id_0002.png" else "004"
         case_info = f"Case #DOC-{case_num} &middot; Semantic Logic Execution"
