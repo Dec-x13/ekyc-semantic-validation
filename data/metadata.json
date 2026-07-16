@@ -8998,5 +8998,32 @@
         "expiry_date": "2028-07-16",
         "label": "Frankenstein",
         "flaw_type": "issue_before_dob"
+    },
+    "live_gen_7253_F.png": {
+        "id_number": "ID-7253",
+        "name": "Hailey Ellis",
+        "dob": "1994-07-27",
+        "issue_date": "1992-07-27",
+        "expiry_date": "2029-07-16",
+        "label": "Frankenstein",
+        "flaw_type": "issue_before_dob"
+    },
+    "live_gen_3933_V.png": {
+        "id_number": "ID-3933",
+        "name": "Kelly Thomas",
+        "dob": "1990-04-20",
+        "issue_date": "2024-08-18",
+        "expiry_date": "2034-08-18",
+        "label": "Valid",
+        "flaw_type": "none"
+    },
+    "live_gen_1029_V.png": {
+        "id_number": "ID-1029",
+        "name": "Francis Nichols",
+        "dob": "1979-03-23",
+        "issue_date": "2025-06-05",
+        "expiry_date": "2035-06-05",
+        "label": "Valid",
+        "flaw_type": "none"
     }
 }
